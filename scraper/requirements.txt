@@ -1,0 +1,6 @@
+requests>=2.31
+beautifulsoup4>=4.12
+rapidfuzz>=3.6
+Pillow>=10.0
+pandas>=2.1
+pytest>=8.0

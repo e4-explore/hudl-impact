@@ -1,0 +1,7 @@
+# Large / regenerable / licensed binaries stay out of git.
+output/logos/
+output/cache/
+output/nces/
+output/*.part
+__pycache__/
+.venv/
