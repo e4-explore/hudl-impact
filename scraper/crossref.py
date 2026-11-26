@@ -36,6 +36,7 @@ TIE_MARGIN = 5.0        # candidates within this many points of the best are "ti
 CITY_BONUS = 5.0
 CITY_PENALTY = 10.0
 N_CANDIDATES = 3
+SUBSET_SCORE = 92.0     # floor for a unique in-town subset match
 
 NCES_COLS = ["nces_id", "name", "city", "state", "zip", "school_type", "grade_span", "source", "district"]
 
@@ -71,10 +72,21 @@ def match_state(logos: pd.DataFrame, nces: pd.DataFrame) -> list[dict]:
         cands = []
         for _, score, idx in hits:
             rec = nces.iloc[idx]
+            subset = fuzz.token_set_ratio(query, rec["norm"]) == 100
+
             city_match = "unknown" if not city else ("yes" if city == rec["norm_city"] else "no")
             conf = score + (CITY_BONUS if city_match == "yes" else 0) - (CITY_PENALTY if city_match == "no" else 0)
             cands.append({"idx": idx, "name_score": round(score, 1), "city_match": city_match,
-                          "confidence": round(max(0.0, min(100.0, conf)), 1)})
+                          "subset": subset, "confidence": round(max(0.0, min(100.0, conf)), 1)})
+        # One name contained in the other ("Alleman Catholic" vs "Alleman",
+        # "Acero-Garcia" vs "Acero Chtr Sch Network - ... Garcia") in the same
+        # town is strong evidence, provided exactly one candidate in town does that.
+        in_town_subsets = [c for c in cands if c["subset"] and c["city_match"] == "yes"]
+        if len(in_town_subsets) == 1:
+            c = in_town_subsets[0]
+            c["name_score"] = max(c["name_score"], SUBSET_SCORE)
+            c["confidence"] = max(c["confidence"], SUBSET_SCORE)
+            cands.sort(key=lambda c: c["name_score"], reverse=True)
         reason = ""
         best = None
         if cands:

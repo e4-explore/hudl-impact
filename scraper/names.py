@@ -9,13 +9,15 @@ import unicodedata
 PHRASES = [
     r"junior\s*/?\s*senior high school", r"jr\s*/?\s*sr high school", r"senior high school",
     r"sr high school", r"junior senior high", r"jr sr high", r"senior high", r"sr high",
-    r"high school", r"h\s*s", r"jr\s*/\s*sr",
+    r"middle\s*/?\s*high school", r"jr\s*and\s*sr", r"high school", r"h\s*s", r"jr\s*/\s*sr",
+    r"k\s*12",
 ]
 
 # Single tokens dropped entirely: generic words that differ between sources.
 STOP_TOKENS = {
     "high", "school", "schools", "hs", "senior", "sr", "community", "comm", "the", "of",
-    "jr", "junior", "secondary", "campus", "twp", "township",
+    "jr", "junior", "secondary", "campus", "twp", "township", "middle", "sch", "network",
+    "chtr", "charter", "and",
 }
 
 # Abbreviation expansion applied token by token.
