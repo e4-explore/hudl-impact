@@ -9,8 +9,8 @@ A school counts as a high school if it offers any of grades 9-12.
 Output: output/nces/nces_high_schools.csv with
   nces_id, name, city, state, zip, school_type, grade_span, source, (+ a few extras)
 
-    python scraper/build_nces.py
-    python scraper/build_nces.py --ccd-url <zip> --pss-url <zip>   # pin specific files
+    python hs-logos/school_list.py
+    python hs-logos/school_list.py --ccd-url <zip> --pss-url <zip>   # pin specific files
 """
 
 from __future__ import annotations

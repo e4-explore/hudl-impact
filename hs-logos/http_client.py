@@ -14,10 +14,10 @@ import requests
 
 log = logging.getLogger(__name__)
 
-DEFAULT_CONTACT = os.environ.get("SCRAPER_CONTACT", "")
+DEFAULT_CONTACT = os.environ.get("LOGO_COLLECTOR_CONTACT", "")
 USER_AGENT = (
-    "HSLogoCoverageBot/1.0 (licensed high-school logo coverage audit; "
-    "runs at ~1 request every 1-2 s"
+    "HSLogoCollector/1.0 (licensed high-school logo collection; "
+    "one request every 2-4 s"
     + (f"; contact: {DEFAULT_CONTACT}" if DEFAULT_CONTACT else "")
     + ")"
 )
@@ -35,8 +35,8 @@ class RobotsDisallowed(Exception):
 class PoliteSession:
     def __init__(
         self,
-        min_delay: float = 1.0,
-        max_delay: float = 2.0,
+        min_delay: float = 2.0,
+        max_delay: float = 4.0,
         max_retries: int = 5,
         timeout: float = 60.0,
         user_agent: str = USER_AGENT,
@@ -98,7 +98,7 @@ class PoliteSession:
     def _request(self, method: str, url: str, check_robots: bool = True, **kw) -> requests.Response:
         host = urlsplit(url).netloc.lower()
         if any(host == b or host.endswith("." + b) for b in BLOCKED_HOSTS):
-            raise ValueError(f"Refusing to fetch {host}: its terms prohibit scraping")
+            raise ValueError(f"Refusing to fetch {host}: its terms prohibit automated collection")
         if check_robots and not self.allowed(url):
             raise RobotsDisallowed(url)
         kw.setdefault("timeout", self.timeout)

@@ -1,4 +1,4 @@
-nces_id,name,city,state,zip,school_type,grade_span,source,district,possible_hslogos_match
+nces_id,name,city,state,zip,school_type,grade_span,source,district,possible_logo_match
 170017906802,Technology Center of DuPage,Addison,IL,60101,Public - Career and Technical School,11-12,CCD 2025-2026,DuPage ROE,
 170351000034,Altamont High School,Altamont,IL,62411,Public - Regular School,09-12,CCD 2025-2026,Altamont CUSD 10,
 A1701455,Center For Children To Heal And Achieve (Ccha),Alton,IL,62002,Private,KG-12,PSS 2023-2024,,

@@ -2,16 +2,16 @@
 """Part 3: cross-reference hslogos.com schools against the NCES high-school list.
 
 Matching: same state, then rapidfuzz on normalised names (see names.py). When
-several NCES schools score about the same, the hslogos page's town breaks the tie.
+several NCES schools score about the same, the logo page's town breaks the tie.
 
 Outputs (in output/results/):
   matched.csv            NCES record + logo paths + match confidence (high confidence only)
-  needs_review.csv       hslogos schools whose best match is low-confidence, ambiguous or absent
+  needs_review.csv       logo schools whose best match is low-confidence, ambiguous or absent
   missing_logos.csv      NCES high schools with no matched logo, sorted by state
   coverage_by_state.csv  total schools, schools with logos, percentage
 
-    python scraper/crossref.py                 # every state
-    python scraper/crossref.py --states IL     # limit to some states
+    python hs-logos/match_schools.py                 # every state
+    python hs-logos/match_schools.py --states IL     # limit to some states
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from rapidfuzz import fuzz, process
 
 from names import RELIGIOUS, normalize_city, normalize_name
 
-log = logging.getLogger("crossref")
+log = logging.getLogger("match")
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUT = os.path.join(HERE, "output")
 
@@ -177,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
         for res in match_state(lg, ns):
             logo, best = res["logo"], res["best"]
             base = {
-                "hslogos_school_name": logo["school_name"], "hslogos_city": logo["city"],
+                "logo_school_name": logo["school_name"], "logo_city": logo["city"],
                 "mascot": logo["mascot"], "school_page_url": logo["school_page_url"],
                 "logo_count": logo["logo_count"], "logo_paths": logo["logo_paths"],
             }
@@ -211,16 +211,16 @@ def main(argv: list[str] | None = None) -> int:
 
     review = pd.DataFrame(review_rows)
     if not review.empty:
-        review = review.sort_values(["state", "reason", "hslogos_school_name"])
+        review = review.sort_values(["state", "reason", "logo_school_name"])
     review.to_csv(os.path.join(results_dir, "needs_review.csv"), index=False)
 
     have = set(matched["nces_id"])
     possible: dict[str, str] = {}
     for r in review_rows:
         if r["reason"] != "no_match" and r.get("candidate1_nces_id"):
-            possible.setdefault(r["candidate1_nces_id"], r["hslogos_school_name"])
+            possible.setdefault(r["candidate1_nces_id"], r["logo_school_name"])
     missing = nces[~nces["nces_id"].isin(have)][NCES_COLS].copy()
-    missing["possible_hslogos_match"] = missing["nces_id"].map(possible).fillna("")
+    missing["possible_logo_match"] = missing["nces_id"].map(possible).fillna("")
     missing = missing.sort_values(["state", "city", "name"])
     missing.to_csv(os.path.join(results_dir, "missing_logos.csv"), index=False)
 
@@ -228,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     cov.to_csv(os.path.join(results_dir, "coverage_by_state.csv"), index=False)
 
     total = cov.iloc[-1]
-    log.info("hslogos schools: %d | matched: %d | needs review: %d", len(logos), len(matched), len(review))
+    log.info("logo schools: %d | matched: %d | needs review: %d", len(logos), len(matched), len(review))
     log.info("NCES high schools: %d | with logos: %d (%.1f%%) | core schools: %d with logos (%.1f%%)",
              total["nces_high_schools"], total["schools_with_logos"], total["pct_with_logos"],
              total["core_schools_with_logos"], total["pct_core_with_logos"])
@@ -237,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def prev_base(row: dict) -> dict:
-    keys = ["hslogos_school_name", "hslogos_city", "mascot", "school_page_url", "logo_count", "logo_paths"]
+    keys = ["logo_school_name", "logo_city", "mascot", "school_page_url", "logo_count", "logo_paths"]
     return {k: row[k] for k in keys}
 
 
@@ -246,7 +246,7 @@ def _review_row(st: str, base: dict, reason: str, cands: list[dict], ns: pd.Data
     row = {"state": st, **base, "reason": reason,
            "best_confidence": cands[0]["confidence"] if cands else own_conf}
     if dup_of is not None:
-        row["note"] = f"NCES {dup_of['nces_id']} ({dup_of['name']}) also matched by {dup_of['hslogos_school_name']}"
+        row["note"] = f"NCES {dup_of['nces_id']} ({dup_of['name']}) also matched by {dup_of['logo_school_name']}"
         if not cands:
             row.update({"candidate1_nces_id": dup_of["nces_id"], "candidate1_name": dup_of["name"],
                         "candidate1_city": dup_of["city"], "candidate1_confidence": own_conf})
@@ -274,8 +274,8 @@ def coverage(nces: pd.DataFrame, matched: pd.DataFrame, logos: pd.DataFrame, rev
         "core_schools": g["core"].sum(),
         "core_schools_with_logos": g.apply(lambda d: (d["has_logo"] & d["core"]).sum(), include_groups=False),
     })
-    cov["hslogos_schools"] = logos.groupby("state").size().reindex(cov.index).fillna(0).astype(int)
-    cov["hslogos_in_review"] = (review.groupby("state").size().reindex(cov.index).fillna(0).astype(int)
+    cov["logo_schools"] = logos.groupby("state").size().reindex(cov.index).fillna(0).astype(int)
+    cov["logo_in_review"] = (review.groupby("state").size().reindex(cov.index).fillna(0).astype(int)
                                 if not review.empty else 0)
     cov = cov.reset_index()
     tot = cov.drop(columns="state").sum()
@@ -286,7 +286,7 @@ def coverage(nces: pd.DataFrame, matched: pd.DataFrame, logos: pd.DataFrame, rev
     cov["pct_with_logos"] = (100 * cov["schools_with_logos"] / cov["nces_high_schools"].where(cov["nces_high_schools"] > 0)).round(1).fillna(0)
     cov["pct_core_with_logos"] = (100 * cov["core_schools_with_logos"] / cov["core_schools"].where(cov["core_schools"] > 0)).round(1).fillna(0)
     return cov[["state", "nces_high_schools", "schools_with_logos", "pct_with_logos", "core_schools",
-                "core_schools_with_logos", "pct_core_with_logos", "hslogos_schools", "hslogos_in_review"]]
+                "core_schools_with_logos", "pct_core_with_logos", "logo_schools", "logo_in_review"]]
 
 
 if __name__ == "__main__":

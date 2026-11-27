@@ -5,3 +5,4 @@ output/nces/
 output/*.part
 __pycache__/
 .venv/
+output/packages/

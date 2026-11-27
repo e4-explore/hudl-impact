@@ -5,11 +5,11 @@ Crawl: search_schools.html -> state index (and its letter-range sub-indexes)
 -> each school page -> every logo image on that page.
 
 Resumable: HTML pages are cached under output/cache/html and images already on
-disk are not downloaded again. manifest.csv is merged, so scraping one state
-later never drops rows for states scraped earlier.
+disk are not downloaded again. manifest.csv is merged, so collecting one state
+later never drops rows for states collected earlier.
 
-    python scraper/scrape_hslogos.py --states IL
-    python scraper/scrape_hslogos.py            # every state on the site
+    python hs-logos/collect_logos.py --states IL
+    python hs-logos/collect_logos.py            # every state on the site
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from PIL import Image
 
 from http_client import PoliteSession, RobotsDisallowed
 
-log = logging.getLogger("hslogos")
+log = logging.getLogger("collect")
 
 BASE = "https://www.hslogos.com/"
 START_URL = BASE + "search_schools.html"
@@ -39,8 +39,8 @@ DEFAULT_OUT = os.path.join(HERE, "output")
 
 MANIFEST_FIELDS = [
     "state", "school_name", "mascot", "school_page_url", "image_url", "local_path",
-    "logo_index", "image_width", "image_height", "sha256", "scraped_at",
-    # Extra context from the school page, used for city tie-breaking in crossref.
+    "logo_index", "image_width", "image_height", "sha256", "collected_at",
+    # Extra context from the school page, used for city tie-breaking in match_schools.
     "city", "county", "logo_label",
 ]
 
@@ -78,7 +78,9 @@ def safe_component(name: str) -> str:
 
 
 class Crawler:
-    def __init__(self, out_dir: str, session: PoliteSession, refresh: bool = False) -> None:
+    def __init__(self, out_dir: str, session: PoliteSession, refresh: bool = False,
+                 primary_only: bool = True) -> None:
+        self.primary_only = primary_only
         self.out_dir = out_dir
         self.session = session
         self.refresh = refresh
@@ -194,6 +196,8 @@ class Crawler:
                     if idx < len(cells):
                         label = cells[idx].get_text(" ", strip=True)
             school.images.append((url, label or ("Primary Logo" if not school.images else "")))
+            if self.primary_only:
+                break  # the first logo on the page is the school's primary athletic mark
         return True
 
     def download_images(self, school: School, previous: dict[str, dict]) -> list[dict]:
@@ -202,11 +206,11 @@ class Crawler:
         for i, (url, label) in enumerate(school.images, start=1):
             filename = safe_component(unquote(url.rsplit("/", 1)[1]))
             dest = os.path.join(school_dir, filename)
-            scraped_at = None
+            collected_at = None
             if not os.path.exists(dest):
                 try:
                     self.session.download(url, dest)
-                    scraped_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+                    collected_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
                 except RobotsDisallowed:
                     self.errors.append((url, "robots_disallowed"))
                     continue
@@ -216,7 +220,7 @@ class Crawler:
                     continue
             else:
                 prev = previous.get(url)
-                scraped_at = prev["scraped_at"] if prev and prev.get("scraped_at") else (
+                collected_at = prev["collected_at"] if prev and prev.get("collected_at") else (
                     dt.datetime.fromtimestamp(os.path.getmtime(dest), dt.timezone.utc).isoformat(timespec="seconds")
                 )
             width = height = ""
@@ -238,7 +242,7 @@ class Crawler:
                 "image_width": width,
                 "image_height": height,
                 "sha256": digest,
-                "scraped_at": scraped_at,
+                "collected_at": collected_at,
                 "city": school.city,
                 "county": school.county,
                 "logo_label": label,
@@ -266,10 +270,12 @@ def write_manifest(path: str, rows: list[dict]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--states", nargs="*", help="Two-letter codes to scrape (default: all on the site)")
-    ap.add_argument("--out", default=DEFAULT_OUT, help="Output directory (default: scraper/output)")
-    ap.add_argument("--min-delay", type=float, default=1.0)
-    ap.add_argument("--max-delay", type=float, default=2.0)
+    ap.add_argument("--states", nargs="*", help="Two-letter codes to collect (default: all on the site)")
+    ap.add_argument("--out", default=DEFAULT_OUT, help="Output directory (default: hs-logos/output)")
+    ap.add_argument("--min-delay", type=float, default=2.0)
+    ap.add_argument("--max-delay", type=float, default=4.0)
+    ap.add_argument("--all-logos", action="store_true",
+                    help="Also download alternate logos (default: primary logo only)")
     ap.add_argument("--refresh", action="store_true", help="Re-fetch HTML pages instead of using the cache")
     ap.add_argument("--limit", type=int, default=0, help="Max schools per state (for testing)")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -280,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     os.makedirs(args.out, exist_ok=True)
     session = PoliteSession(min_delay=args.min_delay, max_delay=args.max_delay)
     log.info("User-Agent: %s", session.user_agent)
-    crawler = Crawler(args.out, session, refresh=args.refresh)
+    crawler = Crawler(args.out, session, refresh=args.refresh, primary_only=not args.all_logos)
 
     manifest_path = os.path.join(args.out, "manifest.csv")
     existing = read_manifest(manifest_path)
@@ -315,7 +321,7 @@ def main(argv: list[str] | None = None) -> int:
 
     write_manifest(manifest_path, kept + new_rows)
     if crawler.errors:
-        err_path = os.path.join(args.out, "scrape_errors.csv")
+        err_path = os.path.join(args.out, "fetch_errors.csv")
         with open(err_path, "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
             w.writerow(["url", "error"])

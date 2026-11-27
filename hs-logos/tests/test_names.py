@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from names import normalize_city, normalize_name  # noqa: E402
-from scrape_hslogos import normalize_url  # noqa: E402
+from collect_logos import normalize_url  # noqa: E402
 
 
 def test_high_school_variants_collapse():
