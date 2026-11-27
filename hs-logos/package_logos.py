@@ -20,6 +20,7 @@ Output in output/packages/:
   logo-index <ST>.csv covering every row of the state.
 
     python hs-logos/package_logos.py --schools hudl_schools.csv --states IL
+    python tools/package_logos.py --schools hudl_schools.csv --data-dir .   # from a logos repo
 """
 
 from __future__ import annotations
@@ -66,9 +67,21 @@ def mascot_match(a: str, b: str) -> str:
     return "no"
 
 
-def load_logo_schools(out_dir: str, states: list[str] | None) -> pd.DataFrame:
-    m = manifests.read_all(out_dir, states)
-    m = m[m["logo_index"] == "1"].copy()   # primary athletic mark only
+def load_logo_schools(out_dir: str, states: list[str] | None, data_dir: str | None = None) -> pd.DataFrame:
+    if data_dir:
+        # A logos data folder: <data_dir>/<ST>/logo-index.csv, paths relative to data_dir.
+        frames = []
+        for st in sorted(os.listdir(data_dir)):
+            idx = os.path.join(data_dir, st, "logo-index.csv")
+            if len(st) == 2 and os.path.exists(idx) and (not states or st in {s.upper() for s in states}):
+                frames.append(pd.read_csv(idx, dtype=str, keep_default_na=False))
+        if not frames:
+            raise SystemExit(f"No <ST>/logo-index.csv found under {data_dir}")
+        m = pd.concat(frames, ignore_index=True).rename(columns={"school": "school_name", "filename": "local_path"})
+        m["school_page_url"] = ""
+    else:
+        m = manifests.read_all(out_dir, states)
+        m = m[m["logo_index"] == "1"].copy()   # primary athletic mark only
     m["norm"] = m["school_name"].map(normalize_name)
     m["norm_city"] = m["city"].map(normalize_city)
     return m.reset_index(drop=True)
@@ -169,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--states", nargs="*", help="Only these states (default: every state in the CSV)")
     ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--no-source", action="store_true", help="Leave the index's source column empty")
+    ap.add_argument("--data-dir", help="Package from a logos data folder (<ST>/logo-index.csv) instead of the manifests")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
@@ -180,7 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         visible = visible[visible["state"].isin({s.upper() for s in args.states})]
     log.info("%d schools (%d hidden skipped)", len(visible), (schools["hidden"].str.strip().str.lower() == "yes").sum())
 
-    logos = load_logo_schools(args.out, args.states)
+    logos = load_logo_schools(args.out, args.states, args.data_dir)
+    logo_root = args.data_dir or args.out
     pkg_dir = os.path.join(args.out, "packages")
     os.makedirs(pkg_dir, exist_ok=True)
 
@@ -192,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
             row = {"hudl_id": rec["hudl_id"], "state": st, "school": rec.get("full_name") or rec.get("short_name", ""),
                    "filename": "", "source": "", "status": status, "notes": note}
             if lg is not None:
-                ok, img_note = check_image(os.path.join(args.out, lg["local_path"]))
+                ok, img_note = check_image(os.path.join(logo_root, lg["local_path"]))
                 row["source"] = "" if args.no_source else lg["school_page_url"]
                 if ok:
                     ext = os.path.splitext(lg["local_path"])[1].lower()
@@ -202,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     row["status"], row["notes"] = "unavailable", img_note
             rows.append(row)
-        zips = package_state(st, rows, pkg_dir, args.out)
+        zips = package_state(st, rows, pkg_dir, logo_root)
         counts = pd.Series([r["status"] for r in rows]).value_counts().to_dict()
         log.info("%s: %d found, %d not found, %d ambiguous, %d unavailable -> %s", st,
                  counts.get("found", 0), counts.get("not found", 0), counts.get("ambiguous", 0),
