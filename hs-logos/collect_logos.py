@@ -5,8 +5,8 @@ Crawl: search_schools.html -> state index (and its letter-range sub-indexes)
 -> each school page -> every logo image on that page.
 
 Resumable: HTML pages are cached under output/cache/html and images already on
-disk are not downloaded again. manifest.csv is merged, so collecting one state
-later never drops rows for states collected earlier.
+disk are not downloaded again. Each state gets its own manifest,
+output/manifests/<ST>.csv, written when that state finishes.
 
     python hs-logos/collect_logos.py --states IL
     python hs-logos/collect_logos.py            # every state on the site
@@ -29,6 +29,7 @@ from bs4 import BeautifulSoup
 from PIL import Image
 
 from http_client import PoliteSession, RobotsDisallowed
+from manifests import manifest_path
 
 log = logging.getLogger("collect")
 
@@ -259,6 +260,7 @@ def read_manifest(path: str) -> list[dict]:
 
 
 def write_manifest(path: str, rows: list[dict]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     rows = sorted(rows, key=lambda r: (r["state"], r["school_name"].lower(), r["school_page_url"], int(r["logo_index"])))
     tmp = path + ".part"
     with open(tmp, "w", newline="", encoding="utf-8") as fh:
@@ -288,46 +290,43 @@ def main(argv: list[str] | None = None) -> int:
     log.info("User-Agent: %s", session.user_agent)
     crawler = Crawler(args.out, session, refresh=args.refresh, primary_only=not args.all_logos)
 
-    manifest_path = os.path.join(args.out, "manifest.csv")
-    existing = read_manifest(manifest_path)
-    previous = {r["image_url"]: r for r in existing}
-
     states = crawler.list_states()
     log.info("Site lists %d states: %s", len(states), " ".join(sorted(states)))
     wanted = [s.upper() for s in args.states] if args.states else sorted(states)
     unknown = [s for s in wanted if s not in states]
     if unknown:
-        log.warning("Not on hslogos.com: %s", " ".join(unknown))
+        log.warning("Not on the site: %s", " ".join(unknown))
     wanted = [s for s in wanted if s in states]
 
-    kept = [r for r in existing if r["state"] not in wanted]
-    new_rows: list[dict] = []
     for st in wanted:
+        path = manifest_path(args.out, st)
+        previous = {r["image_url"]: r for r in read_manifest(path)}
+        crawler.errors = []
+        rows: list[dict] = []
         schools = crawler.list_schools(st, states[st])
         if args.limit:
             schools = schools[: args.limit]
         for n, school in enumerate(schools, 1):
             if not crawler.parse_school(school):
                 continue
-            rows = crawler.download_images(school, previous)
-            new_rows.extend(rows)
+            rows.extend(crawler.download_images(school, previous))
             if not school.images:
                 log.warning("No logos on %s", school.url)
             if n % 25 == 0 or n == len(schools):
                 log.info("%s: %d/%d schools, %d logos so far, %d HTTP requests",
-                         st, n, len(schools), len(new_rows), session.request_count)
-        # Persist after each state so an interrupted full run keeps its progress.
-        write_manifest(manifest_path, kept + new_rows)
-
-    write_manifest(manifest_path, kept + new_rows)
-    if crawler.errors:
-        err_path = os.path.join(args.out, "fetch_errors.csv")
-        with open(err_path, "w", newline="", encoding="utf-8") as fh:
-            w = csv.writer(fh)
-            w.writerow(["url", "error"])
-            w.writerows(crawler.errors)
-        log.warning("%d errors written to %s", len(crawler.errors), err_path)
-    log.info("Done: %d logo rows for %s; manifest at %s", len(new_rows), " ".join(wanted), manifest_path)
+                         st, n, len(schools), len(rows), session.request_count)
+        write_manifest(path, rows)
+        err_path = os.path.join(args.out, "fetch_errors", f"{st}.csv")
+        if crawler.errors:
+            os.makedirs(os.path.dirname(err_path), exist_ok=True)
+            with open(err_path, "w", newline="", encoding="utf-8") as fh:
+                w = csv.writer(fh)
+                w.writerow(["url", "error"])
+                w.writerows(crawler.errors)
+            log.warning("%s: %d errors written to %s", st, len(crawler.errors), err_path)
+        elif os.path.exists(err_path):
+            os.remove(err_path)
+        log.info("%s done: %d schools, %d logos -> %s", st, len({r["school_page_url"] for r in rows}), len(rows), path)
     return 0
 
 

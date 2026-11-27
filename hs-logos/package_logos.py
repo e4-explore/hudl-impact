@@ -3,7 +3,7 @@
 
 Input: the Hudl school CSV (hudl_id, state, full_name, short_name, abbreviation,
 mascot, city, zip, country, hudl_has_image, hidden) plus the collected logos in
-output/manifest.csv.
+output/manifests/<ST>.csv.
 
 For each visible school:
   * candidates are logo schools in the same state with a close name
@@ -36,6 +36,7 @@ import pandas as pd
 from PIL import Image
 from rapidfuzz import fuzz
 
+import manifests
 from match_schools import name_score
 from names import ascii_fold, normalize_city, normalize_name
 
@@ -65,8 +66,8 @@ def mascot_match(a: str, b: str) -> str:
     return "no"
 
 
-def load_logo_schools(manifest: str) -> pd.DataFrame:
-    m = pd.read_csv(manifest, dtype=str, keep_default_na=False)
+def load_logo_schools(out_dir: str, states: list[str] | None) -> pd.DataFrame:
+    m = manifests.read_all(out_dir, states)
     m = m[m["logo_index"] == "1"].copy()   # primary athletic mark only
     m["norm"] = m["school_name"].map(normalize_name)
     m["norm_city"] = m["city"].map(normalize_city)
@@ -179,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         visible = visible[visible["state"].isin({s.upper() for s in args.states})]
     log.info("%d schools (%d hidden skipped)", len(visible), (schools["hidden"].str.strip().str.lower() == "yes").sum())
 
-    logos = load_logo_schools(os.path.join(args.out, "manifest.csv"))
+    logos = load_logo_schools(args.out, args.states)
     pkg_dir = os.path.join(args.out, "packages")
     os.makedirs(pkg_dir, exist_ok=True)
 

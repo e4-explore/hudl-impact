@@ -24,6 +24,7 @@ import sys
 import pandas as pd
 from rapidfuzz import fuzz, process
 
+import manifests
 from names import RELIGIOUS, normalize_city, normalize_name
 
 log = logging.getLogger("match")
@@ -66,8 +67,8 @@ def name_score(a: str, b: str, **_) -> float:
     return blend
 
 
-def load_logo_schools(manifest_path: str) -> pd.DataFrame:
-    m = pd.read_csv(manifest_path, dtype=str, keep_default_na=False)
+def load_logo_schools(out_dir: str, states: list[str] | None = None) -> pd.DataFrame:
+    m = manifests.read_all(out_dir, states)
     m["logo_index"] = m["logo_index"].astype(int)
     m = m.sort_values(["school_page_url", "logo_index"])
     g = m.groupby("school_page_url", sort=False)
@@ -161,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
     nces = pd.read_csv(os.path.join(args.out, "nces", "nces_high_schools.csv"), dtype=str, keep_default_na=False)
-    logos = load_logo_schools(os.path.join(args.out, "manifest.csv"))
+    logos = load_logo_schools(args.out, args.states)
     if args.states:
         wanted = {s.upper() for s in args.states}
         nces = nces[nces["state"].isin(wanted)]
