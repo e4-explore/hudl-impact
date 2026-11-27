@@ -4,10 +4,10 @@
     python hs-logos/bundle_states.py --dest ~/handoff            # every collected state
     python hs-logos/bundle_states.py --dest ~/handoff --states IL OH
 
-Each state becomes "HS Logos <ST>.zip" holding the <ST>/ folder of logos
-(<ST>/<school>.<ext>, unedited) and logo-index.csv at the top level. A state over
-25 MB is split into "HS Logos <ST> 01.zip", "02", ... each with its own index of
-the logos it holds.
+Each state becomes "HS Logos <ST>.zip" holding logos/<ST>/<school>.<ext>
+(unedited) and logos/<ST>/logo-index.csv. A state over 25 MB is split into
+"HS Logos <ST> 01.zip", "02", ...; every part carries the state's full index, so
+unzipping all the zips into one folder gives a complete logos/ tree.
 """
 
 from __future__ import annotations
@@ -45,17 +45,17 @@ def bundle(st: str, out_dir: str, dest: str) -> list[str]:
             size += fsize
         for old in glob.glob(os.path.join(dest, f"HS Logos {st}*.zip")):
             os.remove(old)
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=fields, lineterminator="\n")
+        w.writeheader()
+        w.writerows(rows)
         names = []
         for i, part in enumerate(parts, 1):
             name = f"HS Logos {st}.zip" if len(parts) == 1 else f"HS Logos {st} {i:02d}.zip"
-            buf = io.StringIO()
-            w = csv.DictWriter(buf, fieldnames=fields, lineterminator="\n")
-            w.writeheader()
-            w.writerows(part)
             with zipfile.ZipFile(os.path.join(dest, name), "w") as zf:
                 for r in part:
-                    zf.write(os.path.join(tmp, r["filename"]), r["filename"], compress_type=zipfile.ZIP_STORED)
-                zf.writestr("logo-index.csv", buf.getvalue(), compress_type=zipfile.ZIP_DEFLATED)
+                    zf.write(os.path.join(tmp, r["filename"]), f"logos/{r['filename']}", compress_type=zipfile.ZIP_STORED)
+                zf.writestr(f"logos/{st}/logo-index.csv", buf.getvalue(), compress_type=zipfile.ZIP_DEFLATED)
             names.append(name)
         return names
 
