@@ -24,7 +24,7 @@ import sys
 import pandas as pd
 from rapidfuzz import fuzz, process
 
-from names import normalize_city, normalize_name
+from names import RELIGIOUS, normalize_city, normalize_name
 
 log = logging.getLogger("crossref")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -36,14 +36,34 @@ TIE_MARGIN = 5.0        # candidates within this many points of the best are "ti
 CITY_BONUS = 5.0
 CITY_PENALTY = 10.0
 N_CANDIDATES = 3
+RELIGIOUS_PENALTY = 15.0
+BIG_CITY = 5            # cities with more NCES high schools than this
 SUBSET_SCORE = 92.0     # floor for a unique in-town subset match
 
 NCES_COLS = ["nces_id", "name", "city", "state", "zip", "school_type", "grade_span", "source", "district"]
 
 
+# Words too common in school names to identify one on their own.
+GENERIC = {"academy", "college", "preparatory", "science", "sciences", "math", "mathematics",
+           "technical", "technology", "career", "careers", "arts", "art", "international",
+           "magnet", "early", "center", "institute", "leadership", "stem", "learning",
+           "public", "charter", "christian", "catholic", "county", "north", "south", "east", "west",
+           "street", "saint", "university"}
+
+
+def normalize_name_city_tokens(city: str) -> list[str]:
+    return normalize_name(city or "").split()
+
+
 def name_score(a: str, b: str, **_) -> float:
     """Blend of token-sort (penalises extra words) and token-set (tolerates them)."""
-    return 0.5 * fuzz.token_sort_ratio(a, b) + 0.5 * fuzz.token_set_ratio(a, b)
+    blend = 0.5 * fuzz.token_sort_ratio(a, b) + 0.5 * fuzz.token_set_ratio(a, b)
+    # Spacing differences: "o fallon" / "ofallon", "v i t" / "vit", "la salle" / "lasalle".
+    # Only an exact match once spaces are removed counts; partial credit here
+    # would reward inserted words ("noble street college" vs "noble street uic college").
+    if a.replace(" ", "") == b.replace(" ", ""):
+        return 100.0
+    return blend
 
 
 def load_logo_schools(manifest_path: str) -> pd.DataFrame:
@@ -64,23 +84,40 @@ def load_logo_schools(manifest_path: str) -> pd.DataFrame:
 
 def match_state(logos: pd.DataFrame, nces: pd.DataFrame) -> list[dict]:
     choices = nces["norm"].tolist()
+    big_cities = nces["norm_city"].value_counts().to_dict()
     results = []
     for row in logos.itertuples(index=False):
         query = normalize_name(row.school_name)
         city = normalize_city(row.city)
+        q_tokens = set(query.split())
+        rel_tokens = q_tokens & RELIGIOUS
+        # A town's name only counts as generic in big cities ("Chicago Academy");
+        # in a small town the school is often just named after it ("Byron").
+        town_tokens = set(normalize_name_city_tokens(row.city)) if big_cities.get(city, 0) > BIG_CITY else set()
         hits = process.extract(query, choices, scorer=name_score, limit=15) if choices else []
         cands = []
         for _, score, idx in hits:
             rec = nces.iloc[idx]
-            subset = fuzz.token_set_ratio(query, rec["norm"]) == 100
+            c_tokens = set(rec["norm"].split())
+            # One name's words all appear in the other, and the shorter name has at
+            # least one distinctive word (not generic, not the town's name):
+            # "Alleman" in "Alleman Catholic", "Central" in "Champaign Central",
+            # but not "Chicago Academy" in "Chicago Math Science Academy".
+            smaller = q_tokens if len(q_tokens) <= len(c_tokens) else c_tokens
+            subset = (q_tokens <= c_tokens or c_tokens <= q_tokens) and bool(smaller - GENERIC - town_tokens)
 
             city_match = "unknown" if not city else ("yes" if city == rec["norm_city"] else "no")
+            # Religious/private marker on the logo side, public school without it.
+            if (rel_tokens and rec["school_type"] != "Private"
+                    and not rel_tokens & set(rec["norm"].split())):
+                score = max(0.0, score - RELIGIOUS_PENALTY)
             conf = score + (CITY_BONUS if city_match == "yes" else 0) - (CITY_PENALTY if city_match == "no" else 0)
             cands.append({"idx": idx, "name_score": round(score, 1), "city_match": city_match,
-                          "subset": subset, "confidence": round(max(0.0, min(100.0, conf)), 1)})
+                          "subset": subset, "exact": rec["norm"] == query, "confidence": round(max(0.0, min(100.0, conf)), 1)})
         # One name contained in the other ("Alleman Catholic" vs "Alleman",
         # "Acero-Garcia" vs "Acero Chtr Sch Network - ... Garcia") in the same
         # town is strong evidence, provided exactly one candidate in town does that.
+        cands.sort(key=lambda c: c["name_score"], reverse=True)
         in_town_subsets = [c for c in cands if c["subset"] and c["city_match"] == "yes"]
         if len(in_town_subsets) == 1:
             c = in_town_subsets[0]
@@ -95,8 +132,10 @@ def match_state(logos: pd.DataFrame, nces: pd.DataFrame) -> list[dict]:
             # Tie-break: prefer a city match, then the highest name score.
             tied.sort(key=lambda c: (c["city_match"] == "yes", c["name_score"]), reverse=True)
             best = tied[0]
+            # Rivals: same town evidence and either a near-identical score, or both
+            # merely contain the name (nine "Noble Street ... College Prep" campuses).
             rivals = [c for c in tied[1:] if c["city_match"] == best["city_match"]
-                      and c["name_score"] >= best["name_score"] - 1.0]
+                      and (c["name_score"] >= best["name_score"] - 1.0 or (best["subset"] and c["subset"] and not best["exact"]))]
             if rivals and best["name_score"] >= REVIEW_FLOOR:
                 reason = "ambiguous"
             # Re-rank the remaining candidates for the review file.
@@ -104,6 +143,10 @@ def match_state(logos: pd.DataFrame, nces: pd.DataFrame) -> list[dict]:
             cands = [best] + others
         if best is None or best["confidence"] < REVIEW_FLOOR:
             reason = "no_match"
+        elif not reason and best["city_match"] == "no":
+            # Name matched but the page's town differs from the NCES city: often a
+            # mailing-address difference, sometimes a different school. Have a person look.
+            reason = "city_mismatch"
         elif not reason and best["confidence"] < HIGH_CONFIDENCE:
             reason = "low_confidence"
         results.append({"logo": row._asdict(), "best": best, "cands": cands[:N_CANDIDATES], "reason": reason})

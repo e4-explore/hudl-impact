@@ -107,19 +107,38 @@ first downloaded (UTC).
 
 ## Matching (crossref.py)
 
-1. Names are normalised in `names.py`: case, accents and punctuation; "High School",
-   "HS", "H S", "Senior", "Sr", "Jr/Sr", "Community", "Township"; "St." → "Saint",
-   "Mt." → "Mount", "Prep" → "Preparatory", and so on.
+1. Names are normalised in `names.py`: case, accents and punctuation; grade ranges
+   ("9-12"); "High School", "HS", "H S", "Senior", "Sr", "Jr/Sr", "Middle/High",
+   "Community", "Township", "Charter", "Chtr", "Sch"; "St." → "Saint" (but "Noble St"
+   → "Noble Street"), "Mt." → "Mount", "Prep" → "Preparatory", "Acad" → "Academy",
+   "Metro" → "Metropolitan", and so on.
 2. Within the same state, rapidfuzz scores every NCES school. The score is the
-   average of `token_sort_ratio` and `token_set_ratio`.
-3. Candidates within 5 points of the best are a tie, and the hslogos page's **Town**
-   breaks it, which separates the many "Central High School"s. Confidence is the
-   name score, +5 when the town matches the NCES city and −10 when it doesn't.
-4. Confidence of 90 or more goes to `matched.csv`. From 60 to 90, or when two
-   candidates can't be told apart, the school goes to `needs_review.csv`, which
-   lists the top 3 candidates. Below 60 it is reported as `no_match`. If two hslogos
-   schools claim the same NCES school, the weaker one goes to review as
-   `duplicate_target`.
+   average of `token_sort_ratio` and `token_set_ratio`, or 100 if the names are
+   identical once spaces are removed ("O'Fallon" = "O Fallon", "VIT" = "V I T").
+3. Adjustments:
+   - **Town:** +5 when the hslogos page's Town matches the NCES city; −10 when it doesn't.
+   - **Religious marker:** −15 when the hslogos name has one (Lutheran, Catholic,
+     Christian, Notre Dame, …) and the candidate is a public school without it.
+   - **Subset:** a score of at least 92 when one name's words are all contained in
+     the other ("Alleman Catholic" / "Alleman", "Champaign Central" / "Central",
+     "Acero-Garcia" / "Acero Chtr Sch Network – … Garcia"). This applies only when it
+     is the single such candidate in the same town and the shorter name has a
+     distinctive word. In big cities (more than 5 high schools) the city name doesn't
+     count as distinctive, so "Chicago Academy" does not swallow
+     "Chicago Math and Science Academy".
+4. Candidates within 5 points of the best are a tie, and a town match breaks it.
+5. Routing:
+   - **`matched.csv`:** confidence of 90 or more, and the town doesn't conflict.
+   - **`needs_review.csv`**, with the top 3 candidates and a `reason`:
+     - `low_confidence`: confidence from 60 to 90.
+     - `ambiguous`: two candidates can't be told apart, such as campuses of the same network.
+     - `city_mismatch`: the name matches but the town differs. This is usually a
+       mailing-address difference, sometimes a different school.
+     - `duplicate_target`: two hslogos schools claim the same NCES record, and the
+       weaker one goes here.
+     - `no_match`: best confidence below 60.
+
+All thresholds are constants at the top of `crossref.py`.
 
 ### Results (`output/results/`)
 
